@@ -153,6 +153,35 @@ See [.env.example](.env.example) for the full list.
 
 ## Deploy
 
+### Vercel (always-on link)
+
+The repo includes [Dockerfile.vercel](Dockerfile.vercel). Vercel's
+[Container Runtime](https://vercel.com/docs/functions/runtimes/container) (beta, all plans) detects it and
+runs the server as a container function, so it doesn't use Vercel's Python runtime. The image has
+`ffmpeg` and the speech model built in.
+
+1. Import the GitHub repo in Vercel (or run `vercel link` in this folder).
+2. Add a Production environment variable `REEL_MCP_PATH` set to `/mcp/<long-random-string>`. This is the
+   secret part of the link. Save it, because a Secret-type variable can't be viewed again.
+3. Push to `main` (or run `vercel deploy --prod`). Each push redeploys.
+4. Connect your clients to `https://<project>.vercel.app/mcp/<long-random-string>`.
+
+Vercel limits that apply to this server:
+
+- Each tool call can run for at most 300 s on Hobby, with 2 GB of memory. Reels take a few seconds.
+- Uploads are capped at 4 MB, because Vercel request bodies max out at 4.5 MB. An upload is kept on one
+  instance, so if Vercel answers the next call from another instance the file isn't found. Uploads are
+  more reliable when you run the server locally.
+- After 5 idle minutes the server scales to zero, so the next call has a cold start.
+- When tested in October 2026, Instagram served public reels to Vercel's servers. It can start refusing
+  datacenter IPs at any time, though. You'd then get `not_public` even for public reels, and the upload
+  fallback is the workaround.
+- Vercel's default deployment protection puts a Vercel login in front of preview and per-deployment URLs.
+  Use the project's production domain (`<project>.vercel.app`), which is public. Only the secret path
+  guards it.
+
+### Docker anywhere else
+
 ```bash
 docker build -t reel-mcp .
 docker run -d -p 8000:8000 -v reel-data:/data \
