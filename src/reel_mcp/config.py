@@ -73,7 +73,7 @@ def load_settings() -> Settings:
     path = e("REEL_MCP_PATH", "/mcp")
     return Settings(
         host=e("REEL_HOST", "127.0.0.1"),
-        port=int(e("REEL_PORT", "8000")),
+        port=int(e("REEL_PORT") or e("PORT") or "8000"),  # PORT: set by Vercel, Render, Cloud Run, ...
         mcp_path="/" + path.strip("/"),
         auth_token=e("REEL_AUTH_TOKEN") or None,
         allowed_hosts=_split("REEL_ALLOWED_HOSTS"),
