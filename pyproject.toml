@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reel-mcp"
+version = "0.1.0"
+description = "MCP server (Streamable HTTP) that lets Claude, ChatGPT and other MCP clients inspect and analyse public Instagram Reels."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=2.3,<3",
+    "yt-dlp>=2026.3.0",
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+# Local speech-to-text. Without it everything still works, minus the transcript.
+transcribe = ["faster-whisper>=1.1"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+reel-mcp = "reel_mcp.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reel_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["live: hits the real Instagram (opt-in with REEL_LIVE_URL)"]
