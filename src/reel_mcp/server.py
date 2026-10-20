@@ -112,7 +112,7 @@ def build_server(settings: Settings) -> MCPServer:
     async def analyse_reel(
         url: UrlArg = None,
         video_file: FileArg = None,
-        max_frames: Annotated[int, Field(ge=1, le=16, description="Maximum key frames to return as images.")] = 8,
+        max_frames: Annotated[int, Field(ge=1, le=16, description="Maximum key frames to return as images.")] = 12,
         frame_width: Annotated[int, Field(ge=256, le=1024, description="Width of returned frames in px.")] = 512,
         transcribe: Annotated[bool, Field(description="Transcribe speech in the audio.")] = True,
         include_frames: Annotated[bool, Field(description="Return frames as images. Set false for clients "

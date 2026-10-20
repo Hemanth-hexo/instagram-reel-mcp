@@ -7,7 +7,7 @@ MCP clients look at **public** Instagram Reels from a link. It is written in Pyt
 | Tool | What it returns |
 |---|---|
 | `inspect_reel(url)` | Creator, caption, posted date, view/like/comment counts, duration, resolution, aspect ratio, fps, codecs, file size, and a poster frame |
-| `analyse_reel(url)` | Key frames (images), a timestamped transcript, and measured edit signals: shots, cut times, transitions (hard cut, dissolve, fade, flash, whip/motion cut), pacing, motion level, and camera pans/tilts. It also returns a guide that tells the model how to explain the visuals, editing, animation and transitions |
+| `analyse_reel(url)` | Key frames (images), a timestamped transcript, and measured edit signals: shots, cut times, transitions (hard cut, dissolve, fade, flash, whip/wipe), in-shot changes (titles, overlays, effects, split-screen panels), pacing, motion level, and camera pans/tilts. It also returns a guide that tells the model how to explain the visuals, editing, animation and transitions |
 
 Both tools also accept `video_file` (an uploaded video) as a fallback when Instagram won't serve the reel.
 
@@ -90,9 +90,9 @@ For a quick test, use a tunnel. For anything permanent, deploy it (see below).
    - **ChatGPT:** turn on *Developer mode* (Settings → Apps & Connectors → Advanced), then create a connector.
      Menu names change, so check OpenAI's current docs if they differ.
 
-**ChatGPT and images:** at least one user has reported that ChatGPT drops image blocks returned by MCP tools.
-If that happens, ChatGPT still gets the full text report: edit timeline, camera motion, transcript and
-metadata. Ask it to call `analyse_reel` with `include_frames: false` to skip the images.
+**ChatGPT and images:** tested in October 2026, ChatGPT received the frame images and described their
+contents. If a client can't take images, call `analyse_reel` with `include_frames: false`. It still gets the
+full text report: edit timeline, camera motion, transcript and metadata.
 
 ## Fallback: upload the video yourself
 
@@ -111,15 +111,17 @@ with ffprobe and deleted after `REEL_UPLOAD_TTL_S` (24 h by default).
 `inspect_reel(url?, video_file?)` downloads the reel into a cache (reused for an hour, so a follow-up
 `analyse_reel` is instant) and returns metadata, technical details and one poster frame.
 
-`analyse_reel(url?, video_file?, max_frames=8, frame_width=512, transcribe=true, include_frames=true)`:
+`analyse_reel(url?, video_file?, max_frames=12, frame_width=512, transcribe=true, include_frames=true)`:
 
-- **Frames:** one per shot. Spare frames go to long shots so movement inside a shot is visible. Each frame is labelled with its time and shot.
+- **Frames:** one per shot. Spare frames go to long shots and to shots with in-shot changes, so movement and animation inside a shot are visible. Each frame is labelled with its time and shot.
 - **Edit signals:** measured at up to 30 fps on downscaled frames.
   - *hard_cut*: a one-frame jump.
   - *dissolve*: a blend between two different shots.
   - *fade_to/from_black*, *fade_white*.
   - *flash_white* and *dip_to_black*: one to three frames.
   - *motion_cut*: a cut inside a burst of motion (whip pan, swipe, zoom-blur).
+  - *whip_or_wipe*: a fast move, or a foreground object passing the lens, that ends on an unrelated picture with no visible cut.
+  - *In-shot changes*: part of the picture switches in one step while the framing stays the same. This covers title or text animation, graphic and light-leak overlays, colour or flash effects, split-screen and picture-in-picture panels, and jump cuts. They are reported with a timestamp and the share of the frame that changed, but they don't start a new shot.
   - Per shot: motion level (static, low, medium, high) and camera pans/tilts from phase correlation.
   - Pace: average and median shot length, transitions per 10 s, and whether the cutting speeds up or slows down.
 - **Audio:** loudness, silence, and a local [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
@@ -130,9 +132,12 @@ Errors come back as tool errors with a stable code and a next step: `not_public`
 `missing_input` and `network_error`.
 
 **Accuracy.** Cut detection was frame-exact on synthetic clips and on real Instagram footage spliced with
-known cuts. Dissolve timing was within about 0.2 s. Camera moves and transition types are heuristics, so
-the model is told to check them against the frames. Creative transitions such as masks and match cuts may
-be reported as hard cuts.
+known cuts. Dissolve timing was within about 0.2 s. It was also checked frame by frame against a real
+fast-cut edit with titles, effects, a pillar wipe and a collage sequence. All 10 transitions were placed
+correctly, and the title, effect, collage and light-leak moments were flagged as in-shot changes (panel
+switches close together are merged into one event). Two single-take reels produced no false events.
+Camera moves, transition types and in-shot changes are still heuristics, so the model is told to check
+them against the frames. Mask transitions and match cuts may be reported as hard cuts.
 
 ## Configuration
 

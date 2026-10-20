@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from fractions import Fraction
+from math import gcd
 from pathlib import Path
 
 import numpy as np
@@ -84,10 +85,12 @@ def probe(path: Path) -> dict:
 def _aspect(w: int, h: int) -> str | None:
     if not w or not h:
         return None
-    for name, ratio in (("9:16", 9 / 16), ("4:5", 4 / 5), ("1:1", 1.0), ("16:9", 16 / 9), ("3:4", 3 / 4)):
+    for name, ratio in (("9:16", 9 / 16), ("4:5", 4 / 5), ("1:1", 1.0), ("16:9", 16 / 9), ("3:4", 3 / 4),
+                        ("4:3", 4 / 3), ("2:3", 2 / 3), ("3:2", 3 / 2)):
         if abs(w / h - ratio) < 0.03:
             return name
-    return f"{w}:{h}"
+    g = gcd(w, h)
+    return f"{w // g}:{h // g}"
 
 
 def extract_frame(path: Path, t: float, out: Path, width: int = 512) -> Path:

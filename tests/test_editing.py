@@ -37,8 +37,20 @@ def test_flash_frame(clips):
 
 def test_pan_is_camera_motion_not_a_cut(clips):
     rep = _analyse(clips["pan"])
-    assert rep["transitions"] == []
+    assert rep["transitions"] == [] and rep["in_shot_changes"] == []
     assert rep["shots"][0]["camera_move"] == "pan right"
+
+
+def test_title_pop_in_is_an_in_shot_change_not_a_cut(clips):
+    rep = _analyse(clips["popin"])
+    assert rep["transitions"] == [] and rep["pace"]["shot_count"] == 1
+    assert [c["at_s"] for c in rep["in_shot_changes"]] == [1.5]
+    assert rep["shots"][0]["in_shot_changes"] == 1
+
+
+def test_whip_pan_into_a_new_picture_is_a_transition(clips):
+    (kind, at), = _transitions(_analyse(clips["whip"]))
+    assert kind in ("whip_or_wipe", "motion_cut") and 1.35 <= at <= 1.65
 
 
 def test_exposure_change_is_not_a_dissolve(clips):
@@ -47,7 +59,7 @@ def test_exposure_change_is_not_a_dissolve(clips):
 
 def test_static(clips):
     rep = _analyse(clips["static"])
-    assert rep["transitions"] == [] and rep["shots"][0]["motion"] == "static"
+    assert rep["transitions"] == [] and rep["in_shot_changes"] == [] and rep["shots"][0]["motion"] == "static"
     assert rep["pace"]["pace"] == "single continuous shot"
 
 

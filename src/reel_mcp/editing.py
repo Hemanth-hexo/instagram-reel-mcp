@@ -151,6 +151,89 @@ def _global_shifts(f: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return np.concatenate([pad, dx]), np.concatenate([pad, dy]), np.concatenate([pad, conf])
 
 
+BLOCKS_Y, BLOCKS_X = 6, 8
+
+
+def _blocks(f: np.ndarray) -> np.ndarray:
+    """(n, h, w) -> (n, BLOCKS_Y * BLOCKS_X, bh, bw) tiles."""
+    n, h, w = f.shape
+    bh, bw = h // BLOCKS_Y, w // BLOCKS_X
+    t = f[:, :bh * BLOCKS_Y, :bw * BLOCKS_X].reshape(n, BLOCKS_Y, bh, BLOCKS_X, bw)
+    return t.transpose(0, 1, 3, 2, 4).reshape(n, BLOCKS_Y * BLOCKS_X, bh, bw)
+
+
+def _block_signals(f: np.ndarray, fps: float) -> dict:
+    """Per-frame share of textured blocks that changed abruptly / stayed put, plus the block diffs.
+
+    A real cut changes every block. A title pop-in, effect flash, split-screen panel switch or jump cut
+    changes some blocks while the rest of the framing stays put."""
+    tiles = _blocks(f)
+    n, k = tiles.shape[:2]
+    std = tiles.std(axis=(2, 3))
+    diff = np.zeros((n, k), dtype=np.float32)
+    diff[1:] = np.abs(tiles[1:] - tiles[:-1]).mean(axis=(2, 3))
+    textured = np.zeros((n, k), dtype=bool)
+    textured[1:] = (std[1:] > 0.02) | (std[:-1] > 0.02)  # flat areas (black bars, sky) say nothing
+    base = np.stack([_rolling_median(diff[:, j], max(2, round(fps * 0.5))) for j in range(k)], axis=1)
+    abrupt = (diff >= 0.12) & (diff >= 4 * base + 0.01) & textured
+    count = np.maximum(textured.sum(axis=1), 1)
+    return {"diff": diff, "abrupt": abrupt,
+            "changed": abrupt.sum(axis=1) / count,
+            "unchanged": ((diff < 0.03) & textured).sum(axis=1) / count}
+
+
+def _detect_partial_changes(sig: dict, fps: float, busy: np.ndarray) -> list[int]:
+    """Frames where part of the picture switches in one step while the rest holds still.
+
+    Requiring a step (the changed blocks are calm just before or just after) separates graphics and
+    panel switches from camera or subject motion, which keeps changing frame after frame."""
+    diff, abrupt, changed, unchanged = sig["diff"], sig["abrupt"], sig["changed"], sig["unchanged"]
+    n = len(diff)
+    hits = []
+    for i in np.flatnonzero((changed >= 0.15) & (unchanged >= 0.2) & (changed * unchanged >= 0.1)):
+        if i < 3 or i > n - 4 or busy[i]:
+            continue
+        cols = np.flatnonzero(abrupt[i])
+        before = float((diff[i - 2:i][:, cols].mean(axis=0) / diff[i, cols]).mean())
+        after = float((diff[i + 1:i + 3][:, cols].mean(axis=0) / diff[i, cols]).mean())
+        if min(before, after) <= 0.25:
+            hits.append(int(i))
+    return hits
+
+
+def _detect_motion_transitions(f: np.ndarray, d: np.ndarray, fps: float, busy: np.ndarray) -> list[dict]:
+    """Whip pans and object wipes: a short burst of fast motion with no cut in it, where the picture
+    after the burst is unrelated to the picture before it (the cut is hidden in the blur)."""
+    base = _rolling_median(d, max(2, round(fps)))
+    hot = d >= np.maximum(0.05, 3 * base)
+    events, i, n = [], 1, len(d)
+    while i < n:
+        if not hot[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and hot[j]:
+            j += 1
+        if 2 <= j - i <= round(0.6 * fps) and i >= 2 and j + 1 < n and not busy[i - 1: j + 1].any():
+            a, b = f[i - 2], f[j + 1]
+            kept = float((np.abs(_blocks(a[None])[0] - _blocks(b[None])[0]).mean(axis=(1, 2)) < 0.04).mean())
+            if kept < 0.05 and _correlation(a, b) < 0.3:
+                events.append({"_start": i, "_end": j, "type": "whip_or_wipe", "score": float(d[i:j].max())})
+        i = j
+    return events
+
+
+def _group(frames: list[int], gap: int) -> list[list[int]]:
+    """Split sorted frame indices into runs whose neighbours are at most `gap` frames apart."""
+    groups: list[list[int]] = []
+    for i in frames:
+        if groups and i - groups[-1][-1] <= gap:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return groups
+
+
 def _motion_label(score: float) -> str:
     if score < 0.004:
         return "static"
@@ -190,7 +273,7 @@ def analyse_editing(frames_u8: np.ndarray, fps: float) -> dict:
     n = len(frames_u8)
     duration = n / fps
     if n < 3:
-        return {"analysed_fps": fps, "shots": [], "transitions": [], "pace": {}}
+        return {"analysed_fps": fps, "shots": [], "transitions": [], "in_shot_changes": [], "pace": {}}
     f = frames_u8.astype(np.float32) / 255.0
     d = np.zeros(n, dtype=np.float32)
     d[1:] = np.abs(f[1:] - f[:-1]).mean(axis=(1, 2))
@@ -198,15 +281,30 @@ def analyse_editing(frames_u8: np.ndarray, fps: float) -> dict:
     luma = f.mean(axis=(1, 2))
 
     flashes = _detect_flashes(luma, fps)
-    cuts = [c for c in _detect_cuts(d, hd, fps)
-            if not any(e["_start"] - 1 <= c <= e["_end"] + 1 for e in flashes)]
+    candidates = [c for c in _detect_cuts(d, hd, fps)
+                  if not any(e["_start"] - 1 <= c <= e["_end"] + 1 for e in flashes)]
+    sig = _block_signals(f, fps)
+    # A "cut" that keeps part of the framing is a change inside the shot (title pop-in, effect,
+    # split-screen panel, jump cut), not a new shot.
+    cuts = [c for c in candidates if sig["unchanged"][c] < 0.15]
+    same_framing = [c for c in candidates if sig["unchanged"][c] >= 0.15]
     gradual = [g for g in _detect_gradual(f, d, fps, cuts)
                if not any(g["_start"] <= e["_end"] and e["_start"] <= g["_end"] for e in flashes)]
     dx, dy, conf = _global_shifts(f)
 
+    busy = np.zeros(n, dtype=bool)  # frames already explained by a transition
+    for c in cuts:
+        busy[max(0, c - 1): c + 2] = True
+    for e in gradual + flashes:
+        busy[max(0, e["_start"] - 1): e["_end"] + 2] = True
+    hidden = _detect_motion_transitions(f, d, fps, busy)
+    for e in hidden:
+        busy[max(0, e["_start"] - 1): e["_end"] + 2] = True
+    in_shot = _group(sorted(set(same_framing) | set(_detect_partial_changes(sig, fps, busy))), round(fps * 0.25))
+
     # Transition events in frame units. A hard cut at frame c means frame c starts the new shot.
     events = [{"_start": c, "_end": c, "type": "hard_cut", "score": float(d[c])} for c in cuts]
-    events = sorted(events + gradual + flashes, key=lambda e: e["_start"])
+    events = sorted(events + gradual + flashes + hidden, key=lambda e: e["_start"])
 
     # Shots are the spans between transitions.
     spans, prev = [], 0
@@ -231,6 +329,7 @@ def analyse_editing(frames_u8: np.ndarray, fps: float) -> dict:
             "motion_score": round(motion, 4),
             "camera_move": _camera_move(dx[inner], dy[inner], conf[inner], f.shape[2], f.shape[1]),
             "brightness": round(float(luma[a:b].mean()), 2),
+            "in_shot_changes": sum(a <= g[0] < b for g in in_shot),
         })
 
     transitions = []
@@ -250,6 +349,10 @@ def analyse_editing(frames_u8: np.ndarray, fps: float) -> dict:
                 t["type"] = "motion_cut"
                 t["note"] = "cut hidden inside fast motion (whip pan / swipe / zoom-blur style)"
 
+    in_shot_changes = [{"at_s": round(g[0] / fps, 2),
+                        "share_of_frame_changed": round(float(max(sig["changed"][i] for i in g)), 2)}
+                       for g in in_shot]
+
     durations = [s["duration_s"] for s in shots] or [round(duration, 2)]
     half = duration / 2
     cut_times = [t["at_s"] for t in transitions]
@@ -263,9 +366,11 @@ def analyse_editing(frames_u8: np.ndarray, fps: float) -> dict:
         "cuts_per_10s": round(len(transitions) / duration * 10, 2) if duration else 0,
         "transitions_first_half": sum(t < half for t in cut_times),
         "transitions_second_half": sum(t >= half for t in cut_times),
+        "in_shot_change_count": len(in_shot_changes),
         "pace": _pace_label(float(np.mean(durations))) if len(shots) > 1 else "single continuous shot",
         # Duration-weighted shot motion, so transition spikes don't count as movement.
         "overall_motion": _motion_label(
             sum(s["motion_score"] * s["duration_s"] for s in shots) / max(sum(durations), 1e-6) if shots else 0.0),
     }
-    return {"analysed_fps": fps, "shots": shots, "transitions": transitions, "pace": pace}
+    return {"analysed_fps": fps, "shots": shots, "transitions": transitions,
+            "in_shot_changes": in_shot_changes, "pace": pace}

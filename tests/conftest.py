@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 S = "s=540x960:r=30"
+FREEZE = "trim=end_frame=1,loop=loop=-1:size=1,setpts=N/30/TB"  # hold the first frame
 
 
 def _src(name: str) -> str:
@@ -34,7 +35,8 @@ def clips(tmp_path_factory) -> dict[str, Path]:
     if not shutil.which("ffmpeg"):
         pytest.skip("ffmpeg not installed")
     d = tmp_path_factory.mktemp("clips")
-    out = {k: d / f"{k}.mp4" for k in ("cuts", "dissolve", "fades", "pan", "exposure", "flash", "static")}
+    out = {k: d / f"{k}.mp4" for k in ("cuts", "dissolve", "fades", "pan", "exposure", "flash", "static",
+                                         "popin", "whip")}
 
     # Cuts at 1.5s, 3.0s and 4.5s.
     _concat(out["cuts"], ["testsrc2", "smptehdbars", "mandelbrot", "rgbtestsrc"], [1.5, 1.5, 1.5, 1.5])
@@ -59,6 +61,15 @@ def clips(tmp_path_factory) -> dict[str, Path]:
     _concat(out["flash"], ["testsrc2", "color=c=white", "smptehdbars"], [1.5, 2 / 30, 1.5])
     _ffmpeg("-f", "lavfi", "-t", "3", "-i", _src("smptehdbars"), "-vf", "format=yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", str(out["static"]))
+    # Still frame; a title-like box pops in over part of it at 1.5s (no cut).
+    _ffmpeg("-f", "lavfi", "-i", _src("testsrc2"), "-t", "3", "-vf",
+            f"{FREEZE},drawbox=x=60:y=300:w=420:h=300:color=red:t=fill:enable='gte(t,1.5)',format=yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", str(out["popin"]))
+    # Whip pan from one picture to an unrelated one between 1.4s and 1.6s, blurred, with no hard cut.
+    _ffmpeg("-f", "lavfi", "-i", _src("testsrc2"), "-f", "lavfi", "-i", _src("mandelbrot"), "-t", "3",
+            "-filter_complex", f"[0:v]{FREEZE}[a];[1:v]{FREEZE}[b];[a][b]hstack,"
+            "crop=540:960:x='if(lt(t,1.4),0,if(lt(t,1.6),(t-1.4)/0.2*540,540))':y=0,tmix=frames=4,format=yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", str(out["whip"]))
     return out
 
 

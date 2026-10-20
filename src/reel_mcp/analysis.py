@@ -24,10 +24,13 @@ Explain the reel from three kinds of evidence: the frames (what is on screen), t
 captions, stickers or logos visible in the frames.
 3. Editing and pacing: shot count, shot lengths, rhythm, whether cuts land on speech or beats, \
 jump cuts, and whether the pace speeds up or slows down.
-4. Transitions: each one with its timestamp and type (hard cut, dissolve, fade, flash, or \
-motion_cut = whip/swipe/zoom-blur). Types are heuristics, so check them against the frames.
-5. Animation and motion: camera moves from the shot table, motion graphics, kinetic text, zooms or \
-effects (compare frames from the same shot).
+4. Transitions: each one with its timestamp and type (hard cut, dissolve, fade, flash, motion_cut = a \
+cut inside a whip/swipe/zoom-blur, whip_or_wipe = a fast move or foreground object hiding the cut). Types \
+are heuristics, so check them against the frames.
+5. Animation and motion: camera moves from the shot table, and the in-shot changes, where part of the \
+picture switches while the framing stays (title or text animation, graphic or light-leak overlays, \
+colour or flash effects, split-screen or picture-in-picture panels, jump cuts). Compare frames from the \
+same shot to tell which.
 6. Audio: voiceover vs music, tone, and how the script structures the reel.
 Say when something is inferred or the evidence is thin, for example one frame for a long shot."""
 
@@ -52,9 +55,11 @@ def pick_frame_times(shots: list[dict], duration: float, budget: int) -> list[tu
         return [((shots[i]["start_s"] + shots[i]["end_s"]) / 2, shots[i]["index"]) for i in chosen]
     alloc = [1] * len(shots)
     for _ in range(budget - len(shots)):
-        k = max(range(len(shots)), key=lambda j: shots[j]["duration_s"] / alloc[j])
-        if shots[k]["duration_s"] / (alloc[k] + 1) < 0.75:  # don't oversample short shots
-            break
+        # Long shots and shots with something happening inside them (titles, panels) get extra frames.
+        k = max(range(len(shots)),
+                key=lambda j: shots[j]["duration_s"] * (1 + shots[j].get("in_shot_changes", 0)) / alloc[j])
+        if shots[k]["duration_s"] / (alloc[k] + 1) < 0.75 and not shots[k].get("in_shot_changes"):
+            break  # don't oversample short, uneventful shots
         alloc[k] += 1
     times = []
     for s, a in zip(shots, alloc):
@@ -96,7 +101,7 @@ def inspect(media: ReelMedia, include_poster: bool = True, frame_width: int = 51
     return report, frames
 
 
-def analyse(media: ReelMedia, settings: Settings, *, max_frames: int = 8, frame_width: int = 512,
+def analyse(media: ReelMedia, settings: Settings, *, max_frames: int = 12, frame_width: int = 512,
             transcribe: bool = True, include_frames: bool = True,
             progress: Progress = lambda p, m: None) -> tuple[dict, list[Frame]]:
     mx.require_ffmpeg()
@@ -203,7 +208,8 @@ def render_analysis(report: dict) -> str:
     pace = ed.get("pace", {})
     lines = _header(report) + ["", "## Technical", _technical(report["technical"]), "", "## Editing & pacing"]
     if pace:
-        lines.append(f"{pace['shot_count']} shots, {pace['transition_count']} transitions · avg shot "
+        lines.append(f"{pace['shot_count']} shots, {pace['transition_count']} transitions, "
+                     f"{pace.get('in_shot_change_count', 0)} in-shot changes · avg shot "
                      f"{pace['avg_shot_s']}s (median {pace['median_shot_s']}s) · {pace['cuts_per_10s']} "
                      f"transitions/10s · pace: {pace['pace']} · overall motion: {pace['overall_motion']}")
         a, b = pace["transitions_first_half"], pace["transitions_second_half"]
@@ -211,15 +217,22 @@ def render_analysis(report: dict) -> str:
             lines.append(f"Pacing {'accelerates' if b > a else 'slows down'}: {a} transitions in the first half "
                          f"vs {b} in the second.")
     if ed["shots"]:
-        lines += ["", "| Shot | Time | Length | Motion | Camera move |", "|---|---|---|---|---|"]
+        lines += ["", "| Shot | Time | Length | Motion | Camera move | In-shot changes |",
+                  "|---|---|---|---|---|---|"]
         for s in ed["shots"]:
             lines.append(f"| {s['index']} | {s['start_s']:.2f}–{s['end_s']:.2f}s | {s['duration_s']}s | "
-                         f"{s['motion']} | {s['camera_move'] or '—'} |")
+                         f"{s['motion']} | {s['camera_move'] or '—'} | {s.get('in_shot_changes') or '—'} |")
     if ed["transitions"]:
         lines += ["", "Transitions: " + " · ".join(
             f"{t['at_s']:.2f}s {t['type'].replace('_', ' ')}" + (f" ({t['duration_s']}s)" if t["duration_s"] else "")
             for t in ed["transitions"])]
-    lines.append(f"(Signals measured at {ed['analysed_fps']} fps; transition types and camera moves are heuristics.)")
+    if ed.get("in_shot_changes"):
+        lines += ["", "In-shot changes (part of the picture switches while the framing stays: title/text "
+                  "animation, overlay, effect, split-screen panel or jump cut): " + " · ".join(
+                      f"{c['at_s']:.2f}s ({round(c['share_of_frame_changed'] * 100)}% of frame)"
+                      for c in ed["in_shot_changes"])]
+    lines.append(f"(Signals measured at {ed['analysed_fps']} fps; transition types, in-shot changes and camera "
+                 "moves are heuristics.)")
 
     lines += ["", "## Audio"]
     if not au["present"]:
