@@ -5,3 +5,6 @@ __pycache__/
 data/
 .pytest_cache/
 .DS_Store
+.vercel
+.env*
+!.env.example
