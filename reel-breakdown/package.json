@@ -5,18 +5,19 @@
     "node": ">=22.22.2"
   },
   "version": "1.0.0",
-  "description": "an mcp-use server with React views for MCP Apps",
-  "author": "mcp-use",
+  "description": "MCP App (mcp-use v2) that renders interactive edit breakdowns of public Instagram Reels in ChatGPT and Claude",
+  "author": "Hemanth",
   "license": "MIT",
-  "homepage": "https://github.com/mcp-use/mcp-use",
+  "homepage": "https://github.com/Hemanth-hexo/instagram-reel-mcp/tree/main/reel-breakdown",
   "keywords": [
     "mcp",
-    "mcp-server",
-    "chatgpt plugins",
-    "claude connector",
     "mcp-app",
     "mcp-use",
-    "manufact"
+    "instagram",
+    "reels",
+    "video-analysis",
+    "chatgpt",
+    "claude"
   ],
   "scripts": {
     "build": "mcp-use build",

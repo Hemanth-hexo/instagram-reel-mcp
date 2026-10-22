@@ -10,8 +10,10 @@ import {
   type InstallTargets,
 } from "mcp-use/landing";
 
-// Optional: `export const metadata = { title: "...", description: "..." };`
-// sets the page title and social preview tags.
+export const metadata = {
+  title: "Reel Breakdown",
+  description: "Interactive edit breakdowns of public Instagram Reels for ChatGPT and Claude.",
+};
 
 type InstallTarget = InstallTargets[keyof InstallTargets];
 

@@ -5,6 +5,7 @@ The model is downloaded from Hugging Face on first use and cached (see `reel-mcp
 
 from __future__ import annotations
 
+import importlib.util
 import threading
 import wave
 from pathlib import Path
@@ -18,11 +19,7 @@ _model_lock = threading.Lock()
 
 
 def available() -> bool:
-    try:
-        import faster_whisper  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    return importlib.util.find_spec("faster_whisper") is not None
 
 
 def _get_model(settings: Settings):

@@ -1,8 +1,21 @@
-# Instagram Reel MCP server
+# Instagram Reel MCP
 
-A small [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude, ChatGPT and other
-MCP clients look at **public** Instagram Reels from a link. It is written in Python on the official MCP SDK
-(v2) and served over **Streamable HTTP**.
+Paste a public Instagram Reel link into Claude or ChatGPT and get a real breakdown of how it's made: key
+frames, every cut and transition, title and overlay animation, pacing, camera motion and the transcript.
+
+The repo has two parts:
+
+| Part | What it is | Runs on |
+|---|---|---|
+| **Reel analyser** (this folder) | A Python [MCP](https://modelcontextprotocol.io) server on the official MCP SDK v2, served over **Streamable HTTP**. It does the real work: downloading the reel, ffmpeg, shot and transition detection, and Whisper. | Local, Docker, or Vercel (container) |
+| **[Reel Breakdown](reel-breakdown/)** | An MCP App built with [mcp-use](https://docs.mcp-use.com) v2 that renders the analysis as an interactive card in ChatGPT and Claude. It calls the analyser. | [Manufact Cloud](https://manufact.com) |
+
+![Reel Breakdown edit timeline: shots shaded by motion, cuts, a whip/wipe and in-shot title changes](docs/reel-breakdown-timeline.png)
+
+*The Reel Breakdown card for a fast-cut edit: 11 shots, a whip/wipe past a pillar, and title and overlay
+moments marked as in-shot changes. You can click a shot to see its frames and details.*
+
+## The analyser
 
 | Tool | What it returns |
 |---|---|
@@ -235,4 +248,10 @@ src/reel_mcp/
   media.py         ffmpeg/ffprobe wrappers
   transcribe.py    faster-whisper
   urls.py errors.py config.py cli.py
+tests/             pytest: synthetic clips with known edits, providers, end-to-end over HTTP
+reel-breakdown/    mcp-use MCP App (TypeScript): analyse-reel tool + React view; see its README
 ```
+
+## License
+
+[MIT](LICENSE)
