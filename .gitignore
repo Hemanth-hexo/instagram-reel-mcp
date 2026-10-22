@@ -8,3 +8,8 @@ data/
 .vercel
 .env*
 !.env.example
+
+# Local agent skills (installed per machine)
+.agents/
+.claude/
+skills-lock.json
