@@ -19,74 +19,117 @@ const server = new MCPServer({
 const analyseInputSchema = z.object({
   url: z
     .string()
-    .describe("Public Instagram Reel link, e.g. https://www.instagram.com/reel/ABC123/"),
+    .describe(
+      "Link to the Instagram Reel to analyse, as shared from the Instagram app or website. " +
+        "Only reels from public accounts can be fetched."
+    ),
   transcribe: z
     .boolean()
-    .optional()
-    .describe("Transcribe speech in the audio (default true; slower)."),
+    .default(true)
+    .describe(
+      "Whether to transcribe speech in the audio. Turn it off for a faster result when the reel is " +
+        "music-only or the transcript isn't needed."
+    ),
 });
 
 const analyseOutputSchema = z.object({
-  reel: z.object({
-    url: z.string().describe("Canonical reel URL"),
-    shortcode: z.string().nullable(),
-    username: z.string().nullable().describe("Creator's Instagram handle"),
-    caption: z.string().nullable(),
-    postedAt: z.string().nullable().describe("ISO date the reel was posted"),
-    likes: z.number().nullable(),
-    comments: z.number().nullable(),
-    views: z.number().nullable(),
-  }),
-  video: z.object({
-    durationS: z.number(),
-    width: z.number(),
-    height: z.number(),
-    aspectRatio: z.string().nullable(),
-    fps: z.number().nullable(),
-    hasAudio: z.boolean(),
-  }),
-  pace: z.object({
-    shotCount: z.number(),
-    transitionCount: z.number(),
-    inShotChangeCount: z.number(),
-    avgShotS: z.number(),
-    cutsPer10s: z.number(),
-    label: z.string().describe("Pacing label, e.g. 'very fast (rapid cutting)'"),
-    overallMotion: z.string(),
-  }),
-  shots: z.array(
-    z.object({
-      index: z.number(),
-      startS: z.number(),
-      endS: z.number(),
-      durationS: z.number(),
-      motion: z.string().describe("static | low | medium | high"),
-      cameraMove: z.string().nullable(),
-      inShotChanges: z.number(),
+  reel: z
+    .object({
+      url: z.string().describe("Canonical link to the reel"),
+      shortcode: z.string().nullable().describe("Instagram's ID for the reel, taken from its link"),
+      username: z.string().nullable().describe("Creator's Instagram handle, without the @"),
+      caption: z.string().nullable().describe("The reel's caption text, including hashtags"),
+      postedAt: z.string().nullable().describe("When the reel was posted, as an ISO 8601 timestamp"),
+      likes: z.number().nullable().describe("Like count when analysed; null if Instagram didn't provide it"),
+      comments: z.number().nullable().describe("Comment count when analysed; null if not provided"),
+      views: z.number().nullable().describe("View count when analysed; null if not provided"),
     })
-  ),
-  transitions: z.array(
-    z.object({
-      atS: z.number(),
-      type: z
-        .string()
-        .describe("hard_cut, dissolve, fade_*, flash_white, dip_to_black, motion_cut or whip_or_wipe"),
-      durationS: z.number(),
+    .describe("The reel and its creator, as Instagram shows them to logged-out visitors"),
+  video: z
+    .object({
+      durationS: z.number().describe("Length of the video in seconds"),
+      width: z.number().describe("Displayed width in pixels"),
+      height: z.number().describe("Displayed height in pixels"),
+      aspectRatio: z.string().nullable().describe("Aspect ratio such as 9:16, 4:5 or 4:3"),
+      fps: z.number().nullable().describe("Frames per second"),
+      hasAudio: z.boolean().describe("Whether the video has an audio track"),
     })
-  ),
+    .describe("Technical details of the video file"),
+  pace: z
+    .object({
+      shotCount: z.number().describe("Number of shots (continuous segments between transitions)"),
+      transitionCount: z.number().describe("Number of transitions between shots"),
+      inShotChangeCount: z.number().describe("Number of in-shot changes (see inShotChanges)"),
+      avgShotS: z.number().describe("Average shot length in seconds"),
+      cutsPer10s: z.number().describe("Transitions per 10 seconds of video; higher means faster cutting"),
+      label: z.string().describe("Pacing label, e.g. 'very fast (rapid cutting)' or 'single continuous shot'"),
+      overallMotion: z.string().describe("Duration-weighted motion level across shots: static, low, medium or high"),
+    })
+    .describe("How fast the reel is cut and how much it moves"),
+  shots: z
+    .array(
+      z.object({
+        index: z.number().describe("Shot number, starting at 1"),
+        startS: z.number().describe("Start time in seconds"),
+        endS: z.number().describe("End time in seconds"),
+        durationS: z.number().describe("Shot length in seconds"),
+        motion: z.string().describe("Motion level inside the shot: static, low, medium or high"),
+        cameraMove: z.string().nullable().describe("Detected camera move such as 'pan right' or 'tilt up'; null if none"),
+        inShotChanges: z.number().describe("Number of in-shot changes inside this shot"),
+      })
+    )
+    .describe("Shots in time order"),
+  transitions: z
+    .array(
+      z.object({
+        atS: z.number().describe("Time in seconds where the transition starts"),
+        type: z
+          .string()
+          .describe(
+            "hard_cut, dissolve, fade_to_black, fade_from_black, fade_white, flash_white, dip_to_black, " +
+              "motion_cut (a cut inside a whip/swipe/zoom-blur) or whip_or_wipe (fast motion or a foreground " +
+              "object hiding the cut)"
+          ),
+        durationS: z.number().describe("Length of the transition in seconds; 0 for a hard cut"),
+      })
+    )
+    .describe("Transitions in time order. Types are measured heuristics; check them against the frames"),
   inShotChanges: z
-    .array(z.object({ atS: z.number(), shareOfFrameChanged: z.number() }))
-    .describe("Moments where part of the picture switches while the framing stays (titles, overlays, effects, panels)"),
-  transcript: z.object({
-    available: z.boolean(),
-    speechDetected: z.boolean(),
-    language: z.string().nullable(),
-    segments: z.array(z.object({ startS: z.number(), endS: z.number(), text: z.string() })),
-    note: z.string().nullable(),
-  }),
+    .array(
+      z.object({
+        atS: z.number().describe("Time in seconds"),
+        shareOfFrameChanged: z.number().describe("Share of the frame that changed, from 0 to 1"),
+      })
+    )
+    .describe(
+      "Moments where part of the picture switches while the framing stays: title or text animation, overlays, " +
+        "colour or flash effects, split-screen panels or jump cuts. They don't start a new shot"
+    ),
+  transcript: z
+    .object({
+      available: z.boolean().describe("Whether transcription ran"),
+      speechDetected: z.boolean().describe("Whether any speech was found; false for music-only reels"),
+      language: z.string().nullable().describe("Detected language code, e.g. 'en'"),
+      segments: z
+        .array(
+          z.object({
+            startS: z.number().describe("Segment start in seconds"),
+            endS: z.number().describe("Segment end in seconds"),
+            text: z.string().describe("What was said"),
+          })
+        )
+        .describe("Timestamped speech segments"),
+      note: z.string().nullable().describe("Why there is no transcript, when there isn't one"),
+    })
+    .describe("Speech in the audio"),
   frames: z
-    .array(z.object({ timeS: z.number(), shot: z.number().nullable() }))
-    .describe("Timestamps of the key frames, in the same order as the image content blocks"),
+    .array(
+      z.object({
+        timeS: z.number().describe("Time of the frame in seconds"),
+        shot: z.number().nullable().describe("Shot number the frame belongs to"),
+      })
+    )
+    .describe("Key frames, in the same order as the image blocks in the result content"),
 });
 
 type Analysis = z.infer<typeof analyseOutputSchema>;
@@ -154,22 +197,33 @@ export const analyseReel = server.tool(
     name: "analyse-reel",
     title: "Analyse Instagram Reel",
     description:
-      "Break down a public Instagram Reel: key frames, a shot-by-shot edit timeline (cuts, dissolves, fades, " +
-      "whip/wipe transitions), in-shot changes such as title animation, overlays and split-screen panels, " +
-      "pacing, camera motion and a timestamped transcript. Renders an interactive breakdown card. " +
-      "Private or login-walled reels are refused.",
+      "Break down how an Instagram Reel is made: key frames, a shot-by-shot edit timeline (cuts, dissolves, " +
+      "fades, whip/wipe transitions), in-shot changes such as title animation, overlays and split-screen " +
+      "panels, pacing, camera motion and a timestamped transcript. Renders an interactive breakdown card. " +
+      "Use it when the user shares a reel and asks about its visuals, editing, animation or script. " +
+      "Reels from private accounts can't be fetched and come back as an error.",
     inputSchema: analyseInputSchema,
     outputSchema: analyseOutputSchema,
     view: {
       name: "reel-breakdown",
       description: "Interactive edit breakdown: filmstrip, shot timeline, transitions and transcript",
+      // One dedicated HTTPS origin for this app's views (required for ChatGPT submission).
+      domain: process.env.REEL_VIEW_DOMAIN ?? "https://warm-zero-abu7c.run.mcp-use.com",
       prefersBorder: true,
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    // Status labels while the tool runs / after it finishes. OpenAI documents the flat keys; the nested
+    // form is what Manufact's compatibility checker reads.
+    _meta: {
+      "openai/toolInvocation/invoking": "Analysing reel…",
+      "openai/toolInvocation/invoked": "Analysed reel",
+      "openai/toolInvocation": { invoking: "Analysing reel…", invoked: "Analysed reel" },
+    },
+    // Reads public data only; repeating a call has no side effects (counts may have moved on Instagram).
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ url, transcribe }, ctx) => {
     await ctx.reportProgress(0, 100, "Fetching and analysing the reel");
-    const result = await analyseOnBackend(url, transcribe ?? true);
+    const result = await analyseOnBackend(url, transcribe);
     if (!result.ok) {
       return { isError: true, content: [{ type: "text", text: result.message }] };
     }
